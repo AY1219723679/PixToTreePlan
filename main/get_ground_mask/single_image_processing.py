@@ -14,7 +14,7 @@ deeplab_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DeepLab
 sys.path.insert(0, deeplab_path)  # Insert at beginning to ensure our module takes precedence
 
 # Specify the path to your image
-IMAGE_PATH = "input_images/urban_tree_33_jpg.rf.82a6b61f057221ed1b39cd80344f5dab.jpg"  # Replace with your image path
+IMAGE_PATH = "dataset/input_images/urban_tree_1_jpg.rf.3b0d0591cbe20a93bf8d9fb59761f634.jpg"  # Replace with your image path
 
 # Set up device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -25,6 +25,11 @@ def get_model():
     Load the DeepLabV3+ model with MobileNet backbone trained on Cityscapes
     """
     try:
+        # First check if DeepLabV3Plus-Pytorch repository is available
+        deeplab_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DeepLabV3Plus-Pytorch")
+        if not os.path.isdir(deeplab_path) or len(os.listdir(deeplab_path)) == 0:
+            raise ImportError(f"DeepLabV3Plus-Pytorch directory is empty or missing at {deeplab_path}")
+        
         # Import the DeepLabV3+ model
         from network.modeling import deeplabv3plus_mobilenet
         
@@ -32,43 +37,82 @@ def get_model():
         print("Creating DeepLabV3+ model with MobileNet backbone for Cityscapes (19 classes)...")
         model = deeplabv3plus_mobilenet(num_classes=19, output_stride=16)
         
-        # Load pretrained weights from the checkpoints directory
-        checkpoint_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
-                                      "checkpoints/best_deeplabv3plus_mobilenet_cityscapes_os16.pth")
+        # Check for the checkpoint at multiple possible locations
+        checkpoint_paths = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+                        "checkpoints/best_deeplabv3plus_mobilenet_cityscapes_os16.pth"),
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                        "checkpoints/best_deeplabv3plus_mobilenet_cityscapes_os16.pth")
+        ]
         
-        if os.path.isfile(checkpoint_path):
-            try:
-                # Attempt to load the checkpoint with proper error handling for PyTorch 2.6+
+        checkpoint_loaded = False
+        for checkpoint_path in checkpoint_paths:
+            if os.path.isfile(checkpoint_path):
                 try:
-                    # In PyTorch 2.6+, we need to explicitly set weights_only=False
-                    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
-                except TypeError:
-                    # For older PyTorch versions that don't have the weights_only parameter
-                    checkpoint = torch.load(checkpoint_path, map_location=device)
-                
-                # Check if the checkpoint has the expected format
-                if "model_state" in checkpoint:
-                    model.load_state_dict(checkpoint["model_state"])
-                    print(f"Successfully loaded model from {checkpoint_path}")
-                else:
-                    # Try to load directly if "model_state" key doesn't exist
-                    model.load_state_dict(checkpoint)
-                    print(f"Successfully loaded model from {checkpoint_path} (direct loading)")
-            except Exception as e:
-                print(f"Error loading checkpoint: {e}")
-                print("Using uninitialized model weights. Results will not be accurate.")
-        else:
-            print(f"No checkpoint found at {checkpoint_path}")
+                    # Attempt to load the checkpoint with proper error handling for PyTorch 2.6+
+                    try:
+                        # In PyTorch 2.6+, we need to explicitly set weights_only=False
+                        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+                    except TypeError:
+                        # For older PyTorch versions that don't have the weights_only parameter
+                        checkpoint = torch.load(checkpoint_path, map_location=device)
+                    
+                    # Check if the checkpoint has the expected format
+                    if "model_state" in checkpoint:
+                        model.load_state_dict(checkpoint["model_state"])
+                        print(f"Successfully loaded model from {checkpoint_path}")
+                        checkpoint_loaded = True
+                        break
+                    else:
+                        # Try to load directly if "model_state" key doesn't exist
+                        model.load_state_dict(checkpoint)
+                        print(f"Successfully loaded model from {checkpoint_path} (direct loading)")
+                        checkpoint_loaded = True
+                        break
+                except Exception as e:
+                    print(f"Error loading checkpoint from {checkpoint_path}: {e}")
+            
+        if not checkpoint_loaded:
+            print(f"No valid checkpoint found in any of the expected locations")
             print("Using uninitialized model weights. Results will not be accurate.")
+        
     except Exception as e:
         print(f"Error loading model from DeepLabV3Plus-Pytorch repository: {e}")
         print("Falling back to torchvision's DeepLabV3 model")
         
         # Use torchvision's DeepLabV3 model as a fallback
         import torchvision.models.segmentation as segmentation
-        model = segmentation.deeplabv3_resnet50(weights='COCO_WITH_VOC_LABELS_V1')
-        print("WARNING: Using torchvision's DeepLabV3 model with COCO/VOC labels!")
-        print("This model does not support the 19 Cityscapes classes and will not work correctly.")
+        # Print the version of torchvision
+        import torchvision
+        print(f"Using torchvision version: {torchvision.__version__}")
+        
+        # Try with COCO weights if available
+        try:
+            # For newer versions of torchvision
+            try:
+                from torchvision.models.segmentation.deeplabv3 import DeepLabV3_ResNet101_Weights
+                weights = DeepLabV3_ResNet101_Weights.COCO_WITH_VOC_LABELS_V1
+                model = segmentation.deeplabv3_resnet101(weights=weights)
+                print("Using torchvision's DeepLabV3 with ResNet101 backbone and COCO+VOC labels")
+            except (ImportError, AttributeError):
+                # For older versions
+                model = segmentation.deeplabv3_resnet101(pretrained=True)
+                print("Using torchvision's DeepLabV3 with ResNet101 backbone (pretrained)")
+        except Exception as e1:
+            try:
+                # Try ResNet50 if ResNet101 fails
+                model = segmentation.deeplabv3_resnet50(pretrained=True)
+                print("Using torchvision's DeepLabV3 with ResNet50 backbone (pretrained)")
+            except Exception as e2:
+                print(f"Error loading ResNet101 model: {e1}")
+                print(f"Error loading ResNet50 model: {e2}")
+                print("Using lightweight MobileNetV3 backbone as last resort")
+                model = segmentation.deeplabv3_mobilenet_v3_large(pretrained=True)
+        
+        print("\n⚠️ WARNING: Using torchvision's DeepLabV3 model!")
+        print("This model uses different class labels from the Cityscapes dataset.")
+        print("The segmentation and ground mask results may be less accurate.")
+        print("To improve results, install the DeepLabV3Plus-Pytorch repository.")
     
     model.to(device)
     model.eval()
@@ -261,11 +305,12 @@ def remove_small_components(mask, min_area_ratio=0.1, relative_size_threshold=0.
 def extract_ground_mask(segmentation_map, min_area_ratio=0.1, relative_size_threshold=0.0):
     """
     Extract only the ground-related classes from the segmentation map
-    For Cityscapes, these classes include:
-    - road (0)
-    - sidewalk (1)
-    - vegetation (8) - may include low vegetation/grass
-    - terrain (9) - includes natural ground areas
+    
+    For Cityscapes model:
+    - road (0), sidewalk (1), terrain (9)
+    
+    For COCO/VOC model (when DeepLabV3Plus-Pytorch is missing):
+    - Class 0 may represent background, not road in the COCO labels
     
     Args:
         segmentation_map: The segmentation map with class IDs
@@ -280,10 +325,42 @@ def extract_ground_mask(segmentation_map, min_area_ratio=0.1, relative_size_thre
     # Create empty mask
     ground_mask = np.zeros_like(segmentation_map)
     
-    # Set ground-related pixels to 1
-    ground_classes = [0, 1, 9]  # road, sidewalk, terrain
-    for class_id in ground_classes:
-        ground_mask[segmentation_map == class_id] = 1
+    # Check if we have a model mismatch by examining the unique class IDs
+    unique_classes = np.unique(segmentation_map)
+    print(f"DEBUG: Unique class IDs in segmentation map: {unique_classes}")
+    
+    # If all pixels are labeled as class 0, we likely have a fallback to torchvision model
+    # In this case, we need to detect the ground differently
+    if len(unique_classes) <= 2 and 0 in unique_classes:
+        print("WARNING: All pixels classified as a single class.")
+        print("Likely using torchvision's DeepLabV3 model with COCO/VOC labels.")
+        print("Attempting to detect ground regions using image characteristics...")
+        
+        # For COCO/VOC models, try to detect ground by looking at the bottom portion of the image
+        h, w = segmentation_map.shape
+        bottom_portion = int(h * 0.7)  # Consider bottom 30% as potential ground
+        
+        # Create a mask that gradually increases the probability of being ground
+        # as we move toward the bottom of the image
+        y_coords = np.arange(h).reshape(-1, 1)
+        gradient_mask = np.zeros_like(segmentation_map, dtype=float)
+        
+        # Create a gradient where bottom pixels are more likely to be ground
+        for y in range(h):
+            # Non-linear gradient - emphasize bottom portion
+            if y > bottom_portion:
+                weight = 0.7 + 0.3 * ((y - bottom_portion) / (h - bottom_portion))
+                gradient_mask[y, :] = weight
+        
+        # Convert to binary mask with reasonable threshold
+        ground_mask = (gradient_mask > 0.65).astype(np.uint8)
+    else:
+        # For Cityscapes model - use the proper class IDs
+        # Standard approach: use road (0), sidewalk (1), terrain (9)
+        ground_classes = [0, 1, 9]  
+        for class_id in ground_classes:
+            if class_id in unique_classes:  # Only use classes that actually exist
+                ground_mask[segmentation_map == class_id] = 1
     
     # Apply morphological closing to fill small gaps and smooth the mask
     ground_mask = ndimage.binary_closing(ground_mask, structure=np.ones((7, 7))).astype(np.uint8)
@@ -292,6 +369,13 @@ def extract_ground_mask(segmentation_map, min_area_ratio=0.1, relative_size_thre
     ground_mask = remove_small_components(ground_mask, 
                                           min_area_ratio=min_area_ratio,
                                           relative_size_threshold=relative_size_threshold)
+    
+    # Safety check - if mask is completely blank, use a basic heuristic
+    if np.sum(ground_mask) == 0:
+        print("WARNING: No ground detected. Using fallback heuristic...")
+        h, w = segmentation_map.shape
+        # Create a simple ground mask in the bottom third of the image
+        ground_mask[int(h*2/3):, :] = 1
     
     return ground_mask
 
@@ -445,13 +529,26 @@ def visualize_results(image, segmentation_map, ground_mask):
     # Apply colormap to segmentation map
     colored_segmentation = apply_colormap(segmentation_map, colormap)
     
-    # Define Cityscapes class labels
-    label_map = {
-        0: "road", 1: "sidewalk", 2: "building", 3: "wall", 4: "fence", 5: "pole", 6: "traffic light",
-        7: "traffic sign", 8: "vegetation", 9: "terrain", 10: "sky", 11: "person", 12: "rider", 13: "car",
-        14: "truck", 15: "bus", 16: "train", 17: "motorcycle", 18: "bicycle"
-    }
+    # Define class labels - check if using Cityscapes or COCO
+    unique_classes = np.unique(segmentation_map)
+    using_cityscapes = True
     
+    if len(unique_classes) <= 3 and np.max(unique_classes) <= 1:
+        # Likely using COCO/VOC labels
+        using_cityscapes = False
+        label_map = {
+            0: "background", 
+            1: "foreground"
+        }
+        print("Using COCO/VOC label map for visualization")
+    else:
+        # Using Cityscapes labels
+        label_map = {
+            0: "road", 1: "sidewalk", 2: "building", 3: "wall", 4: "fence", 5: "pole", 6: "traffic light",
+            7: "traffic sign", 8: "vegetation", 9: "terrain", 10: "sky", 11: "person", 12: "rider", 13: "car",
+            14: "truck", 15: "bus", 16: "train", 17: "motorcycle", 18: "bicycle"
+        }
+        print("Using Cityscapes label map for visualization")
     # Create figure with adjusted size to accommodate the legend
     plt.figure(figsize=(20, 7))
     
