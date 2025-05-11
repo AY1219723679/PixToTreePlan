@@ -1,0 +1,72 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Process Single Image",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "wrapper.py",
+                "--image_path=${input:imagePath}",
+                "--visualize"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Batch Process Images",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "batch_process.py",
+                "--input_dir=${input:inputDir}",
+                "--extensions=jpg,jpeg,png",
+                "--visualize"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Generate Comparison Grid",
+            "type": "shell",
+            "command": "python",
+            "args": [
+                "compare_results.py",
+                "--image_dir=${input:inputDir}",
+                "--include_pointcloud",
+                "--output_path=comparison_results.png"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
+        }
+    ],
+    "inputs": [
+        {
+            "id": "imagePath",
+            "type": "promptString",
+            "description": "Path to the image file to process",
+            "default": "dataset/input_images/urban_tree_33_jpg.rf.82a6b61f057221ed1b39cd80344f5dab.jpg"
+        },
+        {
+            "id": "inputDir",
+            "type": "promptString",
+            "description": "Directory containing images to process",
+            "default": "dataset/input_images"
+        }
+    ]
+}

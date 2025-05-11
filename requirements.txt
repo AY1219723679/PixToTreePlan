@@ -6,3 +6,6 @@ Pillow>=8.0.0
 scipy>=1.5.0
 scikit-image>=0.17.0
 tqdm>=4.46.0
+open3d>=0.13.0
+opencv-python>=4.5.0
+timm>=0.4.5
