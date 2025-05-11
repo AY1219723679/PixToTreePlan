@@ -135,17 +135,10 @@ def image_to_pointcloud(image_path, use_alpha=True, z_scale=0.1, sample_rate=1, 
     depth_min = depth_map.min()
     depth_max = depth_map.max()
     depth_map = (depth_map - depth_min) / (depth_max - depth_min)
-    
-    # Optionally save depth map visualization
+      # Depth map visualization is now handled by the main script
+    # This option is kept for backward compatibility but doesn't save files
     if save_depth_map:
-        # Create file path for depth map visualization
-        base_name = os.path.splitext(os.path.basename(image_path))[0]
-        depth_dir = "output_depth"
-        os.makedirs(depth_dir, exist_ok=True)
-        depth_vis_path = os.path.join(depth_dir, f"{base_name}_depth_midas.png")
-        
-        # Save visualization
-        visualize_depth_map(depth_map, depth_vis_path)
+        print("Note: Depth maps are now saved in the image output directory instead of separate folders")
     
     # Create lists for points and colors
     points = []
@@ -233,7 +226,7 @@ def save_pointcloud(pcd, output_path):
 if __name__ == "__main__":
     # Input and output paths
     input_image = "cutout_ground.png"
-    output_dir = "output_pointcloud"
+    output_dir = os.path.join("outputs", "debug_pointcloud")
     
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)

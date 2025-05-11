@@ -6,6 +6,14 @@ import matplotlib.pyplot as plt
 import os
 
 def generate_depth_map(cutout_path="cutout_ground.png", output_dir="output_depth"):
+    """
+    Generate a depth map using MiDaS
+    
+    Args:
+        cutout_path: Path to the cutout image
+        output_dir: Directory to save the depth map
+                    In the new structure, this is the image's output directory
+    """
     print("Starting depth map generation")
     
     # Ensure the output directory exists
@@ -27,11 +35,10 @@ def generate_depth_map(cutout_path="cutout_ground.png", output_dir="output_depth
         else:
             rgb_image.paste(cutout)
             print("Image doesn't have alpha channel, using as is")
-        
-        # Save the RGB version for processing
-        temp_path = "temp_for_depth.jpg"
+          # Create temporary RGB image in memory
+        temp_path = os.path.join(output_dir, "temp_for_depth.jpg")
         rgb_image.save(temp_path)
-        print(f"Saved temporary RGB image to {temp_path}")
+        print(f"Created temporary RGB image for processing")
         
         # Load MiDaS model
         print("Loading MiDaS model...")
@@ -90,33 +97,34 @@ def generate_depth_map(cutout_path="cutout_ground.png", output_dir="output_depth
             full_depth_path = os.path.join(output_dir, "depth_map.png")
             plt.imsave(full_depth_path, output_normalized, cmap="inferno")
             print(f"Saved depth map to {full_depth_path}")
+                  # Create visualization only if output_dir is provided
+            if output_dir:
+                plt.figure(figsize=(15, 10))
                 
-            # Create visualization
-            plt.figure(figsize=(15, 10))
-            
-            plt.subplot(1, 3, 1)
-            plt.title("Original Cutout")
-            plt.imshow(cutout)
-            plt.axis("off")
-            
-            plt.subplot(1, 3, 2)
-            plt.title("Depth Map (brighter = closer)")
-            plt.imshow(output_normalized, cmap="inferno")
-            plt.axis("off")
-            
-            if cutout.mode == 'RGBA':
-                plt.subplot(1, 3, 3)
-                plt.title("Masked Depth Map")
-                plt.imshow(output_masked, cmap="inferno")
+                plt.subplot(1, 3, 1)
+                plt.title("Original Cutout")
+                plt.imshow(cutout)
                 plt.axis("off")
-            
-            plt.tight_layout()
-            vis_path = os.path.join(output_dir, "depth_visualization.png")
-            plt.savefig(vis_path)
-            print(f"Saved visualization to {vis_path}")
-            # Clean up temp file
+                
+                plt.subplot(1, 3, 2)
+                plt.title("Depth Map (brighter = closer)")
+                plt.imshow(output_normalized, cmap="inferno")
+                plt.axis("off")
+                
+                if cutout.mode == 'RGBA':
+                    plt.subplot(1, 3, 3)
+                    plt.title("Masked Depth Map")
+                    plt.imshow(output_masked, cmap="inferno")
+                    plt.axis("off")
+                
+                plt.tight_layout()
+                vis_path = os.path.join(output_dir, "depth_visualization.png")
+                plt.savefig(vis_path)
+                plt.close()  # Close figure to free memory
+                print(f"Saved visualization to {vis_path}")            # Clean up temp file
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+                print(f"Removed temporary file")
                 
             print("Depth map generation complete!")
             

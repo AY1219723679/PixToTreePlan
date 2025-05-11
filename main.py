@@ -17,6 +17,7 @@ sys.path.append(os.path.join(curr_dir, "main", "img_to_pointcloud"))
 # Import the modules with explicit error handling for each import
 try:
     from main.get_ground_mask.single_image_processing import get_model, process_image, extract_ground_mask
+    from main.get_ground_mask.visualization import visualize_segmentation
     print("Successfully imported ground mask modules")
 except ImportError as e:
     print(f"Error importing ground mask modules: {e}")
@@ -51,13 +52,30 @@ except ImportError as e:
     print("Point cloud generation will be disabled")
     print("To enable point cloud generation, install Open3D with: pip install open3d")
 
-def setup_directories():
+def setup_directories(image_basename=None):
     """
     Create necessary output directories if they don't exist
+    
+    Args:
+        image_basename (str, optional): Base name of the image to create specific directories.
+                                        If None, only creates the main output directory.
+    Returns:
+        str: Path to the image's output directory if image_basename provided, else None
     """
-    os.makedirs("output_depth", exist_ok=True)
-    os.makedirs("output_groundmasks", exist_ok=True)
-    os.makedirs("output_pointcloud", exist_ok=True)
+    # Create main outputs directory
+    os.makedirs("outputs", exist_ok=True)
+    
+    # If an image basename is provided, create subdirectories for that image
+    if image_basename:
+        # Create a safe directory name from the image basename
+        safe_name = image_basename.replace('.', '_').replace(' ', '_')
+        image_output_dir = os.path.join("outputs", safe_name)
+        os.makedirs(image_output_dir, exist_ok=True)
+        
+        return image_output_dir
+    
+    # Return None if no image basename provided
+    return None
 
 def parse_arguments():
     """
@@ -109,20 +127,28 @@ def step1_generate_groundmask(image_path, args):
     # Get base filename without extension
     image_basename = os.path.splitext(os.path.basename(image_path))[0]
     
-    # Save the mask
-    mask_path = os.path.join("ground_mask.png")
+    # Create output directory for this image
+    image_output_dir = setup_directories(image_basename)
+    
+    # Save the original image (copy to output directory)
+    original_img_path = os.path.join(image_output_dir, "original.png")
+    shutil.copy2(image_path, original_img_path)
+    
+    # Save segmentation map visualization in the image's output directory
+    segmentation_path = os.path.join(image_output_dir, "segmentation.png")
+    visualize_segmentation(segmentation_map, segmentation_path)
+      # Save the mask in the image's output directory
+    mask_path = os.path.join(image_output_dir, "ground_mask.png")
     Image.fromarray((ground_mask * 255).astype(np.uint8)).save(mask_path)
     
-    # Also save a copy in output_groundmasks with the original image name
-    output_mask_path = os.path.join("output_groundmasks", f"{image_basename}_groundmask.png")
-    Image.fromarray((ground_mask * 255).astype(np.uint8)).save(output_mask_path)
-    
+    # Output paths for user information
+    print(f"  Original image saved to {original_img_path}")
+    print(f"  Segmentation saved to {segmentation_path}")
     print(f"  Ground mask saved to {mask_path}")
-    print(f"  Copy saved to {output_mask_path}")
     
-    return mask_path, image_basename
+    return mask_path, image_basename, image_output_dir
 
-def step2_create_cutout(image_path, mask_path, image_basename):
+def step2_create_cutout(image_path, mask_path, image_basename, image_output_dir):
     """
     Step 2: Create a cutout image using the ground mask
     """
@@ -131,37 +157,32 @@ def step2_create_cutout(image_path, mask_path, image_basename):
     # Ensure image_path is an absolute path
     image_path = os.path.abspath(image_path)
     print(f"  Using absolute image path: {image_path}")
-    
-    # Create cutout
-    cutout_path = "cutout_ground.png"
+      # Create cutout in the image's output directory
+    cutout_path = os.path.join(image_output_dir, "cutout.png")
     create_cutout_with_mask(image_path, mask_path, cutout_path)
     
-    # Also save a copy in output_groundmasks with the original image name
-    output_cutout_path = os.path.join("output_groundmasks", f"{image_basename}_cutout.png")
-    shutil.copy(cutout_path, output_cutout_path)
-    
     print(f"  Cutout saved to {cutout_path}")
-    print(f"  Copy saved to {output_cutout_path}")
     
     return cutout_path
 
-def step3_generate_depth_map(cutout_path):
+def step3_generate_depth_map(cutout_path, image_output_dir):
     """
     Step 3: Generate a depth map using MiDaS
     """
     print("\nSTEP 3: Generating depth map...")
     
-    # Generate depth map
-    output_dir = "output_depth"
-    generate_depth_map(cutout_path=cutout_path, output_dir=output_dir)
+    # Generate depth map to the image's output directory
+    generate_depth_map(cutout_path=cutout_path, output_dir=image_output_dir)
+      # The depth map is saved by the function
+    depth_map_path = os.path.join(image_output_dir, "depth_map.png")
+    depth_masked_path = os.path.join(image_output_dir, "depth_masked.png")
     
-    # The depth map is saved by the function
-    depth_map_path = os.path.join(output_dir, "depth_masked.png")
     print(f"  Depth map saved to {depth_map_path}")
+    print(f"  Masked depth map saved to {depth_masked_path}")
     
-    return depth_map_path
+    return depth_masked_path
 
-def step4_create_pointcloud(cutout_path, image_basename, args):
+def step4_create_pointcloud(cutout_path, image_basename, image_output_dir, args):
     """
     Step 4: Create a point cloud from the cutout image and depth map
     """
@@ -169,10 +190,9 @@ def step4_create_pointcloud(cutout_path, image_basename, args):
     
     # Import Open3D here to ensure it's available
     import open3d as o3d
-    
-    # Define output paths
-    output_pointcloud = os.path.join("output_pointcloud", f"{image_basename}_pointcloud.ply")
-    output_visualization = os.path.join("output_pointcloud", f"{image_basename}_visualization.png")
+      # Define output paths in the image's output directory
+    output_pointcloud = os.path.join(image_output_dir, "point_cloud.ply")
+    output_visualization = os.path.join(image_output_dir, "point_cloud_visualization.png")
     
     # Generate point cloud
     pcd = image_to_pointcloud(
@@ -180,7 +200,7 @@ def step4_create_pointcloud(cutout_path, image_basename, args):
         use_alpha=True, 
         z_scale=args.z_scale, 
         sample_rate=args.sample_rate, 
-        save_depth_map=True
+        save_depth_map=False  # Don't save depth map separately
     )
     
     # Optional: Apply statistical outlier removal
@@ -192,8 +212,7 @@ def step4_create_pointcloud(cutout_path, image_basename, args):
     
     # Save the point cloud
     save_pointcloud(pcd, output_pointcloud)
-    
-    # Visualize the point cloud if requested
+      # Visualize the point cloud if requested
     if args.visualize:
         visualize_pointcloud(pcd, output_visualization)
     
@@ -208,12 +227,13 @@ def main():
     print("PixToTreePlan: Image to Point Cloud Processing Pipeline")
     print("======================================================")
     
-    # Set up directories
+    # Set up main output directory
     setup_directories()
     
     # Parse command line arguments
     args = parse_arguments()
-      # Default image if none provided
+    
+    # Default image if none provided
     if args.image_path is None:
         # Check both possible input image paths
         default_image = "urban_tree_33_jpg.rf.82a6b61f057221ed1b39cd80344f5dab.jpg"
@@ -243,17 +263,18 @@ def main():
     
     try:
         # Step 1: Generate ground mask
-        mask_path, image_basename = step1_generate_groundmask(args.image_path, args)
-          # Step 2: Create cutout image
-        cutout_path = step2_create_cutout(args.image_path, mask_path, image_basename)
+        mask_path, image_basename, image_output_dir = step1_generate_groundmask(args.image_path, args)
+        
+        # Step 2: Create cutout image
+        cutout_path = step2_create_cutout(args.image_path, mask_path, image_basename, image_output_dir)
         
         # Step 3: Generate depth map
-        depth_map_path = step3_generate_depth_map(cutout_path)
+        depth_map_path = step3_generate_depth_map(cutout_path, image_output_dir)
         
         # Step 4: Create point cloud
         if 'POINT_CLOUD_AVAILABLE' in globals() and POINT_CLOUD_AVAILABLE:
             try:
-                output_pointcloud = step4_create_pointcloud(cutout_path, image_basename, args)
+                output_pointcloud = step4_create_pointcloud(cutout_path, image_basename, image_output_dir, args)
                 print("\nPoint cloud generation completed successfully!")
             except Exception as e:
                 print(f"\nERROR in point cloud generation: {str(e)}")
@@ -264,13 +285,15 @@ def main():
         
         print("\n======================================================")
         print("Processing Complete!")
+        print(f"Output directory: {image_output_dir}")
+        print(f"Original Image: {os.path.join(image_output_dir, 'original.png')}")
+        print(f"Segmentation Map: {os.path.join(image_output_dir, 'segmentation.png')}")
         print(f"Ground Mask: {mask_path}")
         print(f"Cutout Image: {cutout_path}")
         print(f"Depth Map: {depth_map_path}")
         if 'output_pointcloud' in locals():
             print(f"Point Cloud: {output_pointcloud}")
         print("======================================================")
-        
     except Exception as e:
         print(f"\nError during processing: {str(e)}")
         import traceback

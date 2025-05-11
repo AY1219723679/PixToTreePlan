@@ -47,6 +47,10 @@ def process_image(image_path, args):
     project_root = os.path.dirname(os.path.abspath(__file__))
     image_path = os.path.abspath(image_path)
     
+    # Get image basename for output
+    image_basename = os.path.splitext(os.path.basename(image_path))[0]
+    print(f"Image basename: {image_basename}")
+    
     # Build command to process this image
     cmd = [
         sys.executable,
@@ -74,6 +78,11 @@ def process_image(image_path, args):
         print(f"Error processing {image_path}:", file=sys.stderr)
         print(result.stderr, file=sys.stderr)
     
+    # Check if output directory exists
+    output_dir = os.path.join("outputs", image_basename.replace('.', '_').replace(' ', '_'))
+    if os.path.isdir(output_dir):
+        print(f"Output saved to: {output_dir}")
+    
     return result.returncode == 0
 
 def find_input_directory(input_dir):
@@ -82,7 +91,10 @@ def find_input_directory(input_dir):
     """
     # Check if the provided directory exists
     if os.path.isdir(input_dir):
-        return input_dir
+        # Check if it contains images
+        if has_image_files(input_dir):
+            print(f"Using provided input directory: {input_dir}")
+            return input_dir
     
     # Try other common paths
     possible_paths = [
@@ -94,12 +106,28 @@ def find_input_directory(input_dir):
     ]
     
     for path in possible_paths:
-        if os.path.isdir(path):
-            print(f"Found input directory at: {path}")
+        if os.path.isdir(path) and has_image_files(path):
+            print(f"Found input directory with images at: {path}")
             return path
     
-    # If no directory is found, return the original (it will fail gracefully later)
+    # If no directory with images is found, return the original input directory
+    print(f"No directory with images found. Using default: {input_dir}")
     return input_dir
+
+def has_image_files(directory, exts=None):
+    """Check if a directory contains image files with given extensions"""
+    if exts is None:
+        exts = ['jpg', 'jpeg', 'png']
+    
+    for ext in exts:
+        pattern = os.path.join(directory, f'*.{ext}')
+        if glob.glob(pattern):
+            return True
+        pattern = os.path.join(directory, f'*.{ext.upper()}')
+        if glob.glob(pattern):
+            return True
+    
+    return False
 
 def main():
     """Main function to process all images in a directory"""
@@ -118,7 +146,8 @@ def main():
         image_files.extend(glob.glob(pattern))
         pattern = os.path.join(input_dir, f'*.{ext.upper()}')
         image_files.extend(glob.glob(pattern))
-      # Sort the files
+    
+    # Sort the files
     image_files.sort()
     
     if not image_files:
@@ -148,8 +177,7 @@ def main():
                 failure_count += 1
         except Exception as e:
             print(f"Error processing {image_path}: {e}")
-            failure_count += 1
-      # Print summary
+            failure_count += 1    # Print summary
     total_time = time.time() - start_time
     print("\n" + "=" * 60)
     print("Batch Processing Complete!")
@@ -157,6 +185,19 @@ def main():
     print(f"Successful: {success_count}")
     print(f"Failed: {failure_count}")
     print(f"Input directory: {input_dir}")
+    
+    # Print information about the output structure
+    if os.path.isdir("outputs"):
+        print("\nOutput Structure:")
+        for item in os.listdir("outputs"):
+            item_path = os.path.join("outputs", item)
+            if os.path.isdir(item_path):
+                print(f"  - {item}/")
+                files = os.listdir(item_path)
+                print(f"    {len(files)} files")
+    else:
+        print("\nNo 'outputs' directory found. Check for errors.")
+    
     print("=" * 60)
 
 if __name__ == "__main__":
