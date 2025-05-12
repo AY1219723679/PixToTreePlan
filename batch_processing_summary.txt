@@ -1,0 +1,27 @@
+Batch Processing Summary
+======================
+
+Date: 2025-05-11 22:43:52
+Input Directory: dataset/input_images
+Images Processed: 16
+Successful: 16
+Failed: 0
+Total Time: 120.5 seconds
+
+Processed Images:
+1. park-trees_14_jpg.rf.144c36462351822201a9e0bfc7b0990d.jpg: Success
+2. park-trees_19_jpg.rf.8d6908c164aaf4b773199fbc190dc552.jpg: Success
+3. park-trees_20_jpg.rf.d373a868ab44b506243e813c1b21b6ff.jpg: Success
+4. park20_jpg.rf.3c66bfa2cee05d4619e7089a3ad74064.jpg: Success
+5. park6_jpg.rf.994ba4b820dba7f11b38f41877e492ba.jpg: Success
+6. park_canopy_3_jpg.rf.c6d361ffbec1acee55769a3b86a912ee.jpg: Success
+7. urban_tree_10_jpg.rf.81eafaad33fd7ce2b7233b8483800d71.jpg: Success
+8. urban_tree_11_jpg.rf.8c2cb2d520158cc50e31c0b91048b362.jpg: Success
+9. urban_tree_15_jpg.rf.07b8bad6dc377c0853011fd3679b47a1.jpg: Success
+10. urban_tree_16_jpg.rf.fc23f6ddfd91685cd5eb93b1572cdb62.jpg: Success
+11. urban_tree_19_jpg.rf.1ffb381a74a7512d6333afe1868f4fd6.jpg: Success
+12. urban_tree_1_jpg.rf.3b0d0591cbe20a93bf8d9fb59761f634.jpg: Success
+13. urban_tree_27_jpg.rf.c5a5a6ca34dace662b61e6a59ddc643d.jpg: Success
+14. urban_tree_29_jpg.rf.25294e1b2569264746831a0b553e1bbb.jpg: Success
+15. urban_tree_33_jpg.rf.82a6b61f057221ed1b39cd80344f5dab.jpg: Success
+16. urban_tree_8_jpg.rf.4b2bc68828f5862d9eac110d4a59151b.jpg: Success

@@ -1,15 +1,26 @@
 {
     "version": "2.0.0",
-    "tasks": [
+    "tasks": [        
+        {
+            "label": "Setup Symbolic Link",
+            "type": "shell",
+            "command": "New-Item -ItemType Junction -Name \"${workspaceFolder}/core/main\" -Target \"${workspaceFolder}/main\" -Force",
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "problemMatcher": []
+        },
         {
             "label": "Process Single Image",
             "type": "shell",
             "command": "python",
             "args": [
-                "wrapper.py",
+                "${workspaceFolder}/core/main.py",
                 "--image_path=${input:imagePath}",
                 "--visualize"
             ],
+            "dependsOn": ["Setup Symbolic Link"],
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -19,30 +30,29 @@
                 "panel": "new"
             },
             "problemMatcher": []
-        },
-        {
+        },        {
             "label": "Batch Process Images",
             "type": "shell",
             "command": "python",
             "args": [
-                "batch_process.py",
+                "${workspaceFolder}/core/batch_process.py",
                 "--input_dir=${input:inputDir}",
                 "--extensions=jpg,jpeg,png",
                 "--visualize"
             ],
+            "dependsOn": ["Setup Symbolic Link"],
             "group": "build",
             "presentation": {
                 "reveal": "always",
                 "panel": "new"
             },
             "problemMatcher": []
-        },
-        {
+        },        {
             "label": "Generate Comparison Grid",
             "type": "shell",
             "command": "python",
             "args": [
-                "compare_results.py",
+                "${workspaceFolder}/core/compare_results.py",
                 "--image_dir=${input:inputDir}",
                 "--include_pointcloud",
                 "--output_path=comparison_results.png"
