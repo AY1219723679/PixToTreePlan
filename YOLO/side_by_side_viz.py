@@ -4,18 +4,26 @@ Side-by-side point cloud visualization for YOLO to 3D demo
 import matplotlib.pyplot as plt
 import numpy as np
 
-def visualize_point_clouds_side_by_side(coords_3d_1, coords_3d_2=None, 
+def visualize_point_clouds_side_by_side(image=None, points=None,
+                                       coords_3d_full=None, coords_3d_masked=None,
                                        title1="3D Points from Original Depth Map", 
-                                       title2="3D Points from Ground-Only Depth Map"):
+                                       title2="3D Points from Ground-Only Depth Map",
+                                       output_path=None):
     """
     Create a side-by-side visualization of two point clouds for comparison.
     
     Args:
-        coords_3d_1 (np.ndarray): First 3D point cloud coordinates
-        coords_3d_2 (np.ndarray, optional): Second 3D point cloud coordinates
+        image (np.ndarray, optional): Original image for visualization
+        points (np.ndarray, optional): 2D points sampled from YOLO boxes
+        coords_3d_full (np.ndarray): 3D coordinates from regular depth map
+        coords_3d_masked (np.ndarray, optional): 3D coordinates from ground-only depth map
         title1 (str): Title for the first point cloud
         title2 (str): Title for the second point cloud
+        output_path (str, optional): Path to save the visualization
     """
+    # For backward compatibility
+    coords_3d_1 = coords_3d_full
+    coords_3d_2 = coords_3d_masked
     # Create a figure for side-by-side visualization
     comparison_fig = plt.figure(figsize=(20, 10))
     

@@ -101,6 +101,24 @@ def parse_args():
         help="Scale factor for depth values"
     )
     
+    parser.add_argument(
+        "--auto_ground", 
+        action="store_true",
+        help="Automatically generate ground-only depth map if not provided"
+    )
+    
+    parser.add_argument(
+        "--skip_validation", 
+        action="store_true",
+        help="Skip validation of depth maps against image dimensions"
+    )
+    
+    parser.add_argument(
+        "--force", 
+        action="store_true",
+        help="Force continue even if validation fails (no prompts)"
+    )
+    
     return parser.parse_args()
 
 
@@ -180,6 +198,121 @@ def visualize_3d_popup(coords_3d, title="3D Point Cloud Visualization"):
     return popup_fig
 
 
+def find_matching_output_folder(image_path, outputs_dir):
+    """
+    Find the output folder that best matches the input image.
+    
+    Args:
+        image_path (str): Path to the input image
+        outputs_dir (str): Path to the outputs directory
+        
+    Returns:
+        str: Path to the matching folder, or None if no match found
+    """
+    if not os.path.exists(outputs_dir):
+        print(f"Error: Outputs directory not found at {outputs_dir}")
+        return None
+    
+    img_name = os.path.basename(image_path)
+    base_name = os.path.splitext(img_name)[0]
+    
+    # Parse the image name to extract key components
+    name_parts = {}
+    
+    # Handle RF code format (e.g., urban_tree_33_jpg.rf.82a6b61f057221ed1b39cd80344f5dab)
+    if '.rf.' in base_name:
+        main_name, rf_code = base_name.split('.rf.')
+        name_parts['main'] = main_name
+        name_parts['rf_code'] = rf_code
+        
+    # Handle _jpg_rf_ format (e.g., urban_tree_33_jpg_rf_82a6b61f057221ed1b39cd80344f5dab)
+    elif '_jpg_rf_' in base_name:
+        main_name, rf_code = base_name.split('_jpg_rf_')
+        name_parts['main'] = main_name
+        name_parts['rf_code'] = rf_code
+    
+    # Clean name if needed
+    else:
+        name_parts['main'] = base_name
+        name_parts['rf_code'] = ""
+    
+    # Extract the image number if available
+    # Find the last number in the main name (e.g., extract '33' from 'urban_tree_33')
+    parts = name_parts['main'].split('_')
+    image_num = None
+    for part in reversed(parts):
+        if part.isdigit():
+            image_num = part
+            break
+    
+    name_parts['image_num'] = image_num
+    
+    print(f"Looking for output folder for: {img_name}")
+    print(f"Main name: {name_parts['main']}")
+    print(f"RF code: {name_parts['rf_code']}")
+    
+    # ------ PRIORITY 1: Find folder with exact RF code match ------
+    if name_parts['rf_code']:
+        for folder in os.listdir(outputs_dir):
+            if name_parts['rf_code'] in folder:
+                folder_path = os.path.join(outputs_dir, folder)
+                if os.path.isdir(folder_path):
+                    print(f"Found exact RF code match: {folder}")
+                    return folder_path
+    
+    # ------ PRIORITY 2: Find folder with exact image number and similar name ------
+    if name_parts['image_num']:
+        for folder in os.listdir(outputs_dir):
+            # Check if both the image number and part of the main name are in the folder name
+            if (name_parts['image_num'] in folder and 
+                any(part in folder.lower() for part in name_parts['main'].lower().split('_') if len(part) > 3)):
+                
+                folder_path = os.path.join(outputs_dir, folder)
+                if os.path.isdir(folder_path):
+                    print(f"Found match with image number and name: {folder}")
+                    return folder_path
+    
+    # ------ PRIORITY 3: Find folder with exact main name match ------
+    # This looks for folders that contain the main part of the image name (e.g., 'urban_tree_33')
+    for folder in os.listdir(outputs_dir):
+        if name_parts['main'].lower() in folder.lower():
+            folder_path = os.path.join(outputs_dir, folder)
+            if os.path.isdir(folder_path):
+                print(f"Found main name match: {folder}")
+                return folder_path
+    
+    # ------ PRIORITY 4: Scoring system for partial matches ------
+    best_match = None
+    best_score = 0
+    
+    for folder in os.listdir(outputs_dir):
+        score = 0
+        folder_lower = folder.lower()
+        
+        # Check for main name components
+        for part in name_parts['main'].lower().split('_'):
+            if len(part) > 2 and part in folder_lower:  # Only count meaningful parts
+                score += 5
+                
+        # Bonus for image number match
+        if name_parts['image_num'] and name_parts['image_num'] in folder:
+            score += 15
+            
+        # Small bonus for any RF code characters matching
+        if name_parts['rf_code'] and name_parts['rf_code'][:4] in folder:
+            score += 2
+            
+        if score > best_score:
+            best_score = score
+            best_match = os.path.join(outputs_dir, folder)
+    
+    if best_match:
+        print(f"Found best matching folder: {os.path.basename(best_match)}")
+        return best_match
+    
+    return None
+
+
 def find_default_files(args):
     """
     Find default input files if not provided as arguments.
@@ -219,74 +352,154 @@ def find_default_files(args):
         if os.path.exists(default_label):
             args.label = default_label
             print(f"Using default label: {args.label}")
-      # Look for corresponding depth map in outputs
+    
+    # Look for corresponding depth map in outputs
     if args.depth is None and args.image is not None:
-        img_name = os.path.basename(args.image)
-        base_name = os.path.splitext(img_name)[0]
+        # Use the improved matching algorithm to find the best folder
+        matching_folder = find_matching_output_folder(args.image, outputs_dir)
         
-        # First, check if the outputs directory exists
-        if os.path.exists(outputs_dir):
-            print(f"Searching for depth maps in: {outputs_dir}")
+        if matching_folder:
+            print(f"Found matching output folder: {matching_folder}")
             
-            # Try to find exact matching output directory first
-            exact_match_found = False
-            for output_folder in os.listdir(outputs_dir):
-                # Print all folder names for debugging
-                print(f"  Checking output folder: {output_folder}")
+            # Look for depth map in the matching folder
+            depth_path = os.path.join(matching_folder, 'depth_map.png')
+            if os.path.exists(depth_path):
+                args.depth = depth_path
+                print(f"Found matching depth map: {args.depth}")
                 
-                # Check for exact match with base name                # Try to match based on filename content
-                # Extract the key parts of the image name (remove file extensions and RF codes)
-                img_key = base_name.split('_jpg_rf_')[0] if '_jpg_rf_' in base_name else base_name
-                output_key = output_folder.split('_jpg_rf_')[0] if '_jpg_rf_' in output_folder else output_folder
-                
-                # See if we have a match
-                if img_key.lower() == output_key.lower() or base_name.lower() in output_folder.lower():
-                    print(f"  Found potential matching folder: {output_folder}")
-                    output_dir_path = os.path.join(outputs_dir, output_folder)
-                    if os.path.isdir(output_dir_path):
-                        # Check for depth_map.png
-                        depth_path = os.path.join(output_dir_path, 'depth_map.png')
-                        if os.path.exists(depth_path):
-                            args.depth = depth_path
-                            print(f"Found matching depth map: {args.depth}")
-                            
-                            # Also look for masked depth map in the same directory
-                            potential_masked_names = ['depth_map_masked.png', 'depth_masked.png', 'ground_depth.png', 'masked_depth.png']
-                            for name in potential_masked_names:
-                                masked_path = os.path.join(output_dir_path, name)
-                                if os.path.exists(masked_path):
-                                    args.depth_masked = masked_path
-                                    print(f"Found matching masked depth map: {args.depth_masked}")
-                                    break
-                            
-                            exact_match_found = True
-                            break
-            
-            # If no exact match found, try looking for any depth map
-            if not exact_match_found:
-                print("No exact matching folder found. Searching all output folders for depth maps...")
-                for output_folder in os.listdir(outputs_dir):
-                    output_dir_path = os.path.join(outputs_dir, output_folder)
-                    if os.path.isdir(output_dir_path):
-                        depth_path = os.path.join(output_dir_path, 'depth_map.png')
-                        if os.path.exists(depth_path):
-                            args.depth = depth_path
-                            print(f"Using depth map from non-matching folder: {args.depth}")
-                            
-                            # Look for masked depth map in the same folder
-                            potential_masked_names = ['depth_map_masked.png', 'depth_masked.png', 'ground_depth.png', 'masked_depth.png']
-                            for name in potential_masked_names:
-                                masked_path = os.path.join(output_dir_path, name)
-                                if os.path.exists(masked_path):
-                                    args.depth_masked = masked_path
-                                    print(f"Using masked depth map: {args.depth_masked}")
-                                    break
-                            
-                            break
+                # Also look for masked depth map in the SAME folder
+                potential_masked_names = ['depth_map_masked.png', 'depth_masked.png', 'ground_depth.png', 'masked_depth.png']
+                for name in potential_masked_names:
+                    masked_path = os.path.join(matching_folder, name)
+                    if os.path.exists(masked_path):
+                        args.depth_masked = masked_path
+                        print(f"Found matching masked depth map: {args.depth_masked}")
+                        break
         else:
-            print(f"Outputs directory not found at: {outputs_dir}")
+            print("No matching output folder found for the provided image.")
     
     return args
+
+
+def validate_depth_map_dimensions(image_path, depth_map_path):
+    """
+    Validates that the depth map dimensions match the image dimensions.
+    
+    Args:
+        image_path (str): Path to the image file
+        depth_map_path (str): Path to the depth map file
+        
+    Returns:
+        bool: True if dimensions match or are proportional, False otherwise
+    """
+    try:
+        # Load image
+        img = Image.open(image_path)
+        img_width, img_height = img.size
+        
+        # Load depth map
+        depth_map = Image.open(depth_map_path)
+        depth_width, depth_height = depth_map.size
+        
+        # Check if dimensions match exactly
+        if img_width == depth_width and img_height == depth_height:
+            return True
+            
+        # Check if dimensions are proportional (within 5% tolerance)
+        width_ratio = img_width / depth_width
+        height_ratio = img_height / depth_height
+        ratio_diff = abs(width_ratio - height_ratio)
+        
+        if ratio_diff < 0.05:
+            print(f"Warning: Image and depth map dimensions don't match exactly, but are proportional.")
+            print(f"Image: {img_width}x{img_height}, Depth map: {depth_width}x{depth_height}")
+            return True
+            
+        # Dimensions don't match
+        print(f"Warning: Image and depth map dimensions don't match and aren't proportional.")
+        print(f"Image: {img_width}x{img_height}, Depth map: {depth_width}x{depth_height}")
+        return False
+        
+    except Exception as e:
+        print(f"Error validating dimensions: {e}")
+        return False
+
+
+def create_ground_only_depth(depth_map, output_path=None):
+    """
+    Create a ground-only depth map by applying simple heuristics.
+    This is a fallback when a proper masked depth map isn't available.
+    
+    Args:
+        depth_map (np.ndarray): The original depth map
+        output_path (str, optional): Path to save the masked depth map
+        
+    Returns:
+        np.ndarray: Ground-only depth map
+    """
+    # Create a copy of the depth map
+    ground_depth = depth_map.copy()
+    
+    # Apply a simple heuristic: ground is typically in the lower part of the image
+    # and has consistent depth values
+    height, width = depth_map.shape
+    
+    # Focus on the bottom third of the image where ground is likely to be
+    bottom_third = depth_map[int(height*2/3):, :]
+    bottom_third_valid = bottom_third[bottom_third > 0]  # Only consider non-zero pixels
+    
+    if len(bottom_third_valid) == 0:
+        print("Warning: No valid depth values in the bottom part of the image.")
+        return ground_depth  # Return original if we can't determine ground
+        
+    # Find a threshold to separate ground from non-ground objects
+    # Ground is typically at a consistent depth, with objects being closer (smaller depth value)
+    threshold = np.percentile(bottom_third_valid, 65)  # 65th percentile often works well
+    
+    # Create mask: keep pixels that are likely to be ground
+    # Ground pixels are those with depth greater than the threshold and not too far
+    max_ground_depth = threshold * 1.5  # Don't include very far objects
+    ground_mask = (depth_map >= threshold) & (depth_map <= max_ground_depth)
+    
+    # Apply the mask
+    ground_depth[~ground_mask] = 0
+    
+    # Save the masked depth map if requested
+    if output_path:
+        Image.fromarray((ground_depth * 255).astype(np.uint8)).save(output_path)
+        print(f"Created and saved estimated ground-only depth map to {output_path}")
+    
+    return ground_depth
+
+
+def save_point_cloud_to_ply(coords_3d, output_path):
+    """
+    Save 3D coordinates to a PLY file.
+    
+    Args:
+        coords_3d (np.ndarray): 3D coordinates array of shape (N, 3)
+        output_path (str): Path to save the PLY file
+    """
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    
+    # Open the PLY file for writing
+    with open(output_path, 'w') as f:
+        # Write header
+        f.write("ply\n")
+        f.write("format ascii 1.0\n")
+        f.write(f"element vertex {len(coords_3d)}\n")
+        f.write("property float x\n")
+        f.write("property float y\n")
+        f.write("property float z\n")
+        f.write("end_header\n")
+        
+        # Write vertices
+        for i in range(len(coords_3d)):
+            x, y, z = coords_3d[i]
+            f.write(f"{x} {y} {z}\n")
+    
+    print(f"Point cloud saved to {output_path}")
 
 
 def main():
@@ -308,220 +521,188 @@ def main():
         print("Error: Depth map file not provided or not found.")
         return
     
+    # Validate depth map matches image dimensions
+    if not args.skip_validation:
+        if not validate_depth_map_dimensions(args.image, args.depth):
+            print("Error: Depth map dimensions do not match the image dimensions.")
+            if not args.force:
+                user_input = input("Do you want to continue anyway? (y/n): ")
+                if user_input.lower() != 'y':
+                    print("Exiting.")
+                    return
+    
+    # Handle masked depth map
     if args.depth_masked is None:
         # Try to find ground mask in the same directory as the depth map
-        if args.depth is not None:
-            depth_dir = os.path.dirname(args.depth)
-            potential_ground_files = [
-                os.path.join(depth_dir, 'ground_mask.png'),
-                os.path.join(depth_dir, 'ground_only.png'),
-                os.path.join(depth_dir, 'segmentation_ground.png'),
-                os.path.join(depth_dir, 'segment_ground.png')
-            ]
-            
-            for ground_file in potential_ground_files:
-                if os.path.exists(ground_file):
-                    print(f"Found ground mask: {ground_file}")
-                    print("Creating ground-only depth map using the ground mask...")
+        depth_dir = os.path.dirname(args.depth)
+        potential_ground_files = [
+            os.path.join(depth_dir, 'ground_mask.png'),
+            os.path.join(depth_dir, 'ground_only.png'),
+            os.path.join(depth_dir, 'segmentation_ground.png'),
+            os.path.join(depth_dir, 'segment_ground.png')
+        ]
+        
+        found_ground_mask = False
+        for ground_file in potential_ground_files:
+            if os.path.exists(ground_file):
+                print(f"Found ground mask: {ground_file}")
+                print("Creating ground-only depth map using the ground mask...")
+                
+                # Load the ground mask and original depth map
+                try:
+                    ground_mask = load_depth_map(ground_file) > 0  # Convert to binary mask
+                    original_depth = load_depth_map(args.depth)
                     
-                    # Load the ground mask and original depth map
-                    try:
-                        ground_mask = load_depth_map(ground_file) > 0  # Convert to binary mask
-                        original_depth = load_depth_map(args.depth)
-                        
-                        # Create masked depth map (zero out non-ground areas)
-                        masked_depth = original_depth.copy()
-                        masked_depth[~ground_mask] = 0
-                        
-                        # Save the masked depth map temporarily
-                        masked_depth_path = os.path.join(os.path.dirname(args.depth), 'depth_map_masked.png')
-                        Image.fromarray((masked_depth * 255).astype(np.uint8)).save(masked_depth_path)
-                        
-                        args.depth_masked = masked_depth_path
-                        print(f"Created masked depth map: {args.depth_masked}")
-                        break
-                    except Exception as e:
-                        print(f"Failed to create masked depth map: {e}")
+                    # Create masked depth map (zero out non-ground areas)
+                    masked_depth = original_depth.copy()
+                    masked_depth[~ground_mask] = 0
+                    
+                    # Save the masked depth map temporarily
+                    masked_depth_path = os.path.join(depth_dir, 'depth_map_masked.png')
+                    Image.fromarray((masked_depth * 255).astype(np.uint8)).save(masked_depth_path)
+                    
+                    args.depth_masked = masked_depth_path
+                    print(f"Created masked depth map: {args.depth_masked}")
+                    found_ground_mask = True
+                    break
+                except Exception as e:
+                    print(f"Failed to create masked depth map: {e}")
+        
+        # If no ground mask is found, create a ground-only depth map using heuristics
+        if not found_ground_mask and args.auto_ground:
+            print("No ground mask found. Creating ground-only depth map using heuristics...")
+            try:
+                original_depth = load_depth_map(args.depth)
+                masked_depth_path = os.path.join(depth_dir, 'depth_map_masked.png')
+                ground_depth = create_ground_only_depth(original_depth)
+                Image.fromarray((ground_depth * 255).astype(np.uint8)).save(masked_depth_path)
+                args.depth_masked = masked_depth_path
+                print(f"Created estimated ground-only depth map: {args.depth_masked}")
+            except Exception as e:
+                print(f"Failed to create estimated ground-only depth map: {e}")
     
-    if args.depth_masked is None or not os.path.exists(args.depth_masked):
-        print("Warning: Masked depth map not provided or not found. Only the original depth map will be visualized.")
-    
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
-    
-    # Print information about the files being used
-    print(f"Processing image: {os.path.basename(args.image)}")
-    print(f"Using label file: {os.path.basename(args.label)}")
-    print(f"Using depth map: {os.path.basename(args.depth)}")
-    if args.depth_masked:
-        print(f"Using masked depth map: {os.path.basename(args.depth_masked)}")
-    
-    # Load YOLO bounding boxes
-    bboxes = load_yolo_bboxes(args.label, args.image)
-    print(f"Loaded {len(bboxes)} bounding boxes")
-    
-    # Load the depth maps
-    depth_map = load_depth_map(args.depth)
-    print(f"Loaded depth map of shape {depth_map.shape}")
-    
-    depth_map_masked = None
-    if args.depth_masked:
-        depth_map_masked = load_depth_map(args.depth_masked)
-        print(f"Loaded masked depth map of shape {depth_map_masked.shape}")
-    
-    # Get center points from bounding boxes
-    center_points = sample_points_from_boxes(bboxes)
-    print(f"Extracted {len(center_points)} center points from bounding boxes")
-    
-    if len(center_points) == 0:
-        print("No valid points to process. Exiting.")
+    # If we have a masked depth map, validate it
+    if args.depth_masked and not args.skip_validation:
+        if not validate_depth_map_dimensions(args.image, args.depth_masked):
+            print("Error: Masked depth map dimensions do not match the image dimensions.")
+            if not args.force:
+                user_input = input("Do you want to continue anyway? (y/n): ")
+                if user_input.lower() != 'y':
+                    print("Exiting.")
+                    return
+      # Load YOLO bounding boxes from the label file
+    try:
+        print(f"Loading YOLO boxes from: {args.label}")
+        bboxes = load_yolo_bboxes(args.label, image_path=args.image)
+        print(f"Found {len(bboxes)} bounding boxes.")
+    except Exception as e:
+        print(f"Error loading YOLO boxes: {e}")
         return
     
-    # Convert to 3D coordinates with raw pixel coordinates
-    coords_3d_raw = pixel_coords_to_3d(center_points, depth_map, z_scale=args.z_scale, normalize=False)
-    print(f"Converted points to 3D coordinates (original depth map)")
-    
-    coords_3d_masked_raw = None
-    if depth_map_masked is not None:
-        coords_3d_masked_raw = pixel_coords_to_3d(center_points, depth_map_masked, z_scale=args.z_scale, normalize=False)
-        print(f"Converted points to 3D coordinates (masked depth map)")
-    
-    # Load and prepare the image for visualization
+    # Sample points from the bounding boxes
     try:
-        img = np.array(Image.open(args.image).convert('RGB'))
+        points = sample_points_from_boxes(bboxes)
+        if len(points) == 0:
+            print("Warning: No points were extracted from bounding boxes.")
     except Exception as e:
-        print(f"Failed to load image with PIL: {e}, falling back to OpenCV")
-        img = cv2.imread(args.image)
-        if img is None:
-            raise ValueError(f"Could not read image from {args.image}")
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    
-    # Create visualizations
-    fig = plt.figure(figsize=(18, 6))
-    
-    # 1. Original image with bounding boxes
-    ax1 = fig.add_subplot(131)
-    ax1.imshow(img)
-    
-    for bbox in bboxes:
-        x1, y1, x2, y2 = bbox['x1'], bbox['y1'], bbox['x2'], bbox['y2']
-        rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, linewidth=2, edgecolor='r', facecolor='none')
-        ax1.add_patch(rect)
-    
-    ax1.scatter(center_points[:, 0], center_points[:, 1], color='yellow', s=5, alpha=0.9)
-    ax1.set_title('Image with YOLO Boxes and Center Points')
-      # 2. Depth maps comparison
-    if depth_map_masked is not None:
-        # Find common min/max for depth values for consistent coloring
-        # Ignore zeros in the masked depth map when computing min/max
-        depth_masked_nonzero = depth_map_masked[depth_map_masked > 0] if np.any(depth_map_masked > 0) else np.array([0])
-        
-        vmin = min(np.min(depth_map), np.min(depth_masked_nonzero))
-        vmax = max(np.max(depth_map), np.max(depth_masked_nonzero))
-        
-        # Original depth map
-        ax2 = fig.add_subplot(132)
-        im2 = ax2.imshow(depth_map, cmap='plasma', vmin=vmin, vmax=vmax)
-        ax2.scatter(center_points[:, 0], center_points[:, 1], color='white', s=5, alpha=0.9)
-        ax2.set_title('Original Depth Map')
-        fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
-        
-        # Masked depth map
-        ax3 = fig.add_subplot(133)
-        # Create a custom colormap that shows zero values as black
-        cmap_masked = plt.cm.plasma.copy()
-        cmap_masked.set_bad('black')  # For NaN values
-        
-        # Convert zeros to NaN for visualization
-        depth_map_masked_viz = depth_map_masked.copy().astype(float)
-        depth_map_masked_viz[depth_map_masked_viz == 0] = np.nan
-        
-        im3 = ax3.imshow(depth_map_masked_viz, cmap=cmap_masked, vmin=vmin, vmax=vmax)
-        ax3.scatter(center_points[:, 0], center_points[:, 1], color='white', s=5, alpha=0.9)
-        ax3.set_title('Ground-Only Depth Map')
-        fig.colorbar(im3, ax=ax3, fraction=0.046, pad=0.04)
-    else:
-        # Just show the original depth map
-        ax2 = fig.add_subplot(132)
-        im2 = ax2.imshow(depth_map, cmap='plasma')
-        ax2.scatter(center_points[:, 0], center_points[:, 1], color='white', s=5, alpha=0.9)
-        ax2.set_title('Depth Map with Center Points')
-        fig.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
-    
-    # Save the visualization of image and depth maps
-    depth_viz_path = os.path.join(args.output_dir, 'depth_maps_comparison.png')
-    plt.tight_layout()
-    plt.savefig(depth_viz_path, dpi=200)
-    print(f"Depth map comparison saved to {depth_viz_path}")
-    
-    # Create side-by-side visualization of 3D point clouds
-    if coords_3d_masked_raw is not None:
-        # Create and save the side-by-side visualization
-        comparison_fig = visualize_point_clouds_side_by_side(
-            coords_3d_raw, 
-            coords_3d_masked_raw,
-            title1="3D Points from Original Depth Map",
-            title2="3D Points from Ground-Only Depth Map"
-        )
-        
-        # Save the comparison visualization
-        comparison_path = os.path.join(args.output_dir, 'depth_comparison_3d_visualization.png')
-        comparison_fig.savefig(comparison_path, dpi=200)
-        print(f"3D point cloud comparison saved to {comparison_path}")
-    else:
-        # Show only the original point cloud
-        popup_fig = visualize_3d_popup(coords_3d_raw, title="3D Points from Original Depth Map")
-        
-        # Save the visualization
-        popup_path = os.path.join(args.output_dir, 'original_3d_visualization.png')
-        popup_fig.savefig(popup_path, dpi=200)
-        print(f"3D visualization saved to {popup_path}")
-    
-    # Save the 3D coordinates
-    np.save(os.path.join(args.output_dir, 'original_3d_coords.npy'), coords_3d_raw)
-    if coords_3d_masked_raw is not None:
-        np.save(os.path.join(args.output_dir, 'masked_3d_coords.npy'), coords_3d_masked_raw)
-    
-    # Optional: Create PLY files for the 3D point clouds
+        print(f"Error sampling points: {e}")
+        return
+      # Load the image for visualization
     try:
-        import open3d as o3d
-        
-        # Save original depth point cloud
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(coords_3d_raw)
-        
-        # Create some default colors based on depth
-        colors = np.zeros((len(coords_3d_raw), 3))
-        normalized_z = (coords_3d_raw[:, 2] - coords_3d_raw[:, 2].min()) / (coords_3d_raw[:, 2].max() - coords_3d_raw[:, 2].min())
-        colors[:, 0] = 1 - normalized_z  # Red channel (higher for smaller depth)
-        colors[:, 2] = normalized_z      # Blue channel (higher for greater depth)
-        pcd.colors = o3d.utility.Vector3dVector(colors)
-        
-        ply_path = os.path.join(args.output_dir, 'original_depth_points.ply')
-        o3d.io.write_point_cloud(ply_path, pcd)
-        print(f"Original depth point cloud saved to {ply_path}")
-        
-        # Save masked depth point cloud if available
-        if coords_3d_masked_raw is not None:
-            pcd_masked = o3d.geometry.PointCloud()
-            pcd_masked.points = o3d.utility.Vector3dVector(coords_3d_masked_raw)
-            
-            # Create colors based on depth for masked point cloud
-            colors_masked = np.zeros((len(coords_3d_masked_raw), 3))
-            normalized_z_masked = (coords_3d_masked_raw[:, 2] - coords_3d_masked_raw[:, 2].min()) / (coords_3d_masked_raw[:, 2].max() - coords_3d_masked_raw[:, 2].min())
-            colors_masked[:, 0] = 1 - normalized_z_masked
-            colors_masked[:, 2] = normalized_z_masked
-            pcd_masked.colors = o3d.utility.Vector3dVector(colors_masked)
-            
-            ply_path_masked = os.path.join(args.output_dir, 'ground_only_depth_points.ply')
-            o3d.io.write_point_cloud(ply_path_masked, pcd_masked)
-            print(f"Ground-only depth point cloud saved to {ply_path_masked}")
-        
-    except ImportError:
-        print("Open3D not available. Skipping PLY file creation.")
+        print(f"Loading image from: {args.image}")
+        # Use PIL instead of OpenCV for better Unicode path support
+        pil_img = Image.open(args.image)
+        img = np.array(pil_img)
+        # PIL loads in RGB, no need to convert
+        print(f"Image loaded successfully: {img.shape}")
+    except Exception as e:
+        print(f"Error loading image: {e}")
+        return
     
-    # Keep the figures open until closed by the user
-    plt.show()
+    # Load the depth map
+    try:
+        print(f"Loading depth map from: {args.depth}")
+        depth_map = load_depth_map(args.depth)
+    except Exception as e:
+        print(f"Error loading depth map: {e}")
+        return
+    
+    # Convert 2D points to 3D coordinates using the regular depth map
+    try:
+        print("Converting points to 3D using regular depth map...")
+        coords_3d_full = pixel_coords_to_3d(points, depth_map, z_scale=args.z_scale)
+    except Exception as e:
+        print(f"Error converting to 3D with regular depth map: {e}")
+        return
+    
+    # If masked depth map is provided, also convert points using it
+    coords_3d_masked = None
+    if args.depth_masked and os.path.exists(args.depth_masked):
+        try:
+            print(f"Loading masked depth map from: {args.depth_masked}")
+            masked_depth_map = load_depth_map(args.depth_masked)
+            
+            print("Converting points to 3D using masked depth map...")
+            coords_3d_masked = pixel_coords_to_3d(points, masked_depth_map, z_scale=args.z_scale)
+        except Exception as e:
+            print(f"Error converting to 3D with masked depth map: {e}")
+    else:
+        print("No masked depth map provided or found. Skipping masked depth conversion.")
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Save the point clouds to PLY files
+    if len(coords_3d_full) > 0:
+        full_ply_path = os.path.join(args.output_dir, 'full_depth_points.ply')
+        try:
+            save_point_cloud_to_ply(coords_3d_full, full_ply_path)
+            print(f"Saved full depth point cloud to: {full_ply_path}")
+        except Exception as e:
+            print(f"Error saving full depth point cloud: {e}")
+    
+    if coords_3d_masked is not None and len(coords_3d_masked) > 0:
+        masked_ply_path = os.path.join(args.output_dir, 'ground_depth_points.ply')
+        try:
+            save_point_cloud_to_ply(coords_3d_masked, masked_ply_path)
+            print(f"Saved ground depth point cloud to: {masked_ply_path}")
+        except Exception as e:
+            print(f"Error saving ground depth point cloud: {e}")
+    
+    # Visualize the results
+    try:
+        # Create side-by-side visualization
+        print("Creating side-by-side visualization...")
+        visualize_point_clouds_side_by_side(
+            image=img,
+            points=points,
+            coords_3d_full=coords_3d_full,
+            coords_3d_masked=coords_3d_masked,
+            output_path=os.path.join(args.output_dir, 'depth_comparison.png')
+        )
+        print("Side-by-side visualization complete.")
+    except Exception as e:
+        print(f"Error during visualization: {e}")
+    
+    # Open popup windows for 3D visualization
+    if len(coords_3d_full) > 0:
+        try:
+            # Visualize full depth point cloud
+            print("Creating 3D visualization of full depth point cloud...")
+            visualize_3d_popup(coords_3d_full, title="Full Depth Point Cloud")
+        except Exception as e:
+            print(f"Error creating full depth 3D visualization: {e}")
+    
+    if coords_3d_masked is not None and len(coords_3d_masked) > 0:
+        try:
+            # Visualize masked depth point cloud
+            print("Creating 3D visualization of ground depth point cloud...")
+            visualize_3d_popup(coords_3d_masked, title="Ground Depth Point Cloud")
+        except Exception as e:
+            print(f"Error creating ground depth 3D visualization: {e}")
+    
+    print("\nDone! You can close the visualization windows when finished.")
+    plt.show()  # Keep the visualization windows open until manually closed
 
 
 if __name__ == "__main__":
