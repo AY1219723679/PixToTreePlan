@@ -263,11 +263,10 @@ def visualize_3d_popup(coords_3d, title="3D Point Cloud Visualization"):
         s=30,  # Larger point size for better visibility
         alpha=0.8
     )
-    
-    # Set labels and title
-    popup_ax.set_xlabel('X')
-    popup_ax.set_ylabel('Y')
-    popup_ax.set_zlabel('Z (Depth)')
+      # Set labels and title
+    popup_ax.set_xlabel('X (pixel)')
+    popup_ax.set_ylabel('Y (pixel)')
+    popup_ax.set_zlabel('Z (depth)')
     popup_ax.set_title(title)
     
     # Add a color bar to show the depth scale
@@ -465,9 +464,8 @@ def main():
     # Convert to 3D coordinates
     coords_3d = pixel_coords_to_3d(center_points, depth_map, z_scale=args.z_scale)
     print(f"Converted points to 3D coordinates")
-    
-    # Get normalized 3D coordinates for visualization
-    coords_3d_norm = pixel_coords_to_3d(center_points, depth_map, z_scale=args.z_scale, normalize=True)
+      # Get raw pixel coordinates for 3D visualization (not normalized)
+    coords_3d_raw = pixel_coords_to_3d(center_points, depth_map, z_scale=args.z_scale, normalize=False)
       # Load and prepare the image for visualization using PIL (better Unicode support)
     try:
         from PIL import Image
@@ -501,23 +499,22 @@ def main():
     ax2 = fig.add_subplot(132)
     ax2.imshow(depth_map, cmap='plasma')
     ax2.scatter(center_points[:, 0], center_points[:, 1], color='white', s=5, alpha=0.9)
-    ax2.set_title('Depth Map with Center Points')
-      # 3. 3D visualization
+    ax2.set_title('Depth Map with Center Points')    # 3. 3D visualization
     ax3 = fig.add_subplot(133, projection='3d')
     
     # Color the points by their depth value
-    colors = plt.cm.plasma(coords_3d_norm[:, 2])
+    colors = plt.cm.plasma(coords_3d_raw[:, 2])
     
     ax3.scatter(
-        coords_3d_norm[:, 0], 
-        coords_3d_norm[:, 1], 
-        coords_3d_norm[:, 2], 
+        coords_3d_raw[:, 0], 
+        coords_3d_raw[:, 1], 
+        coords_3d_raw[:, 2], 
         c=colors, s=5, alpha=0.8
     )
     
-    ax3.set_xlabel('X')
-    ax3.set_ylabel('Y')
-    ax3.set_zlabel('Z (Depth)')
+    ax3.set_xlabel('X (pixel)')
+    ax3.set_ylabel('Y (pixel)')
+    ax3.set_zlabel('Z (depth)')
     ax3.set_title('3D Visualization of YOLO Box Centers')
     
     # Save the visualization
@@ -530,17 +527,16 @@ def main():
     coords_path = os.path.join(args.output_dir, 'yolo_centers_3d_coords.npy')
     np.save(coords_path, coords_3d)
     print(f"3D coordinates saved to {coords_path}")
-    
-    # Optional: Create a simple PLY file with the 3D points
+      # Optional: Create a simple PLY file with the 3D points
     try:
         import open3d as o3d
         
         pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(coords_3d_norm)
+        pcd.points = o3d.utility.Vector3dVector(coords_3d_raw)
         
         # Create some default colors based on depth
-        colors = np.zeros((len(coords_3d_norm), 3))
-        normalized_z = (coords_3d_norm[:, 2] - coords_3d_norm[:, 2].min()) / (coords_3d_norm[:, 2].max() - coords_3d_norm[:, 2].min())
+        colors = np.zeros((len(coords_3d_raw), 3))
+        normalized_z = (coords_3d_raw[:, 2] - coords_3d_raw[:, 2].min()) / (coords_3d_raw[:, 2].max() - coords_3d_raw[:, 2].min())
         colors[:, 0] = 1 - normalized_z  # Red channel (higher for smaller depth)
         colors[:, 2] = normalized_z      # Blue channel (higher for greater depth)
         pcd.colors = o3d.utility.Vector3dVector(colors)
@@ -550,9 +546,8 @@ def main():
         print(f"3D point cloud saved to {ply_path}")
         
     except ImportError:
-        print("Open3D not available. Skipping PLY file creation.")
-      # Show popup visualization
-    popup_fig = visualize_3d_popup(coords_3d_norm, title="Interactive 3D Visualization of YOLO Box Centers")
+        print("Open3D not available. Skipping PLY file creation.")    # Show popup visualization
+    popup_fig = visualize_3d_popup(coords_3d_raw, title="Interactive 3D Visualization of YOLO Box Centers (Raw Pixels)")
     
     # Keep the figures open until closed by the user
     plt.show()
