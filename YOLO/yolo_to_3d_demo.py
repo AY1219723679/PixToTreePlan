@@ -122,8 +122,8 @@ def parse_args():
     parser.add_argument(
         "--sample_points", 
         type=int, 
-        default=100,
-        help="Number of points to sample per bounding box"
+        default=1,
+        help="Ignored parameter. Only center points are used (kept for backward compatibility)"
     )
     
     parser.add_argument(
@@ -136,34 +136,34 @@ def parse_args():
     return parser.parse_args()
 
 
-def sample_points_from_boxes(bboxes, num_points_per_box=100):
+def sample_points_from_boxes(bboxes, num_points_per_box=None):
     """
-    Sample points from YOLO bounding boxes.
+    Get center points from YOLO bounding boxes.
     
     Args:
         bboxes (list): List of bounding box dictionaries from load_yolo_bboxes
-        num_points_per_box (int, optional): Number of points to sample per box. Defaults to 100.
+        num_points_per_box (int, optional): Ignored parameter, kept for backward compatibility.
+            Only one point (center) is returned per box.
         
     Returns:
-        np.ndarray: Array of shape (N, 2) containing sampled points
+        np.ndarray: Array of shape (N, 2) containing center points of each box
     """
-    all_points = []
+    center_points = []
     
     for bbox in bboxes:
         x1, y1 = bbox['x1'], bbox['y1']
         x2, y2 = bbox['x2'], bbox['y2']
         
-        # Sample points within the bounding box
-        x_points = np.random.uniform(x1, x2, num_points_per_box)
-        y_points = np.random.uniform(y1, y2, num_points_per_box)
+        # Compute the geometric center of the bounding box
+        x_center = (x1 + x2) / 2
+        y_center = (y1 + y2) / 2
         
-        # Combine into (x, y) pairs
-        box_points = np.column_stack((x_points, y_points))
-        all_points.append(box_points)
+        # Add the center point
+        center_points.append([x_center, y_center])
     
-    # Combine all points into a single array
-    if all_points:
-        return np.vstack(all_points)
+    # Convert to numpy array
+    if center_points:
+        return np.array(center_points)
     else:
         return np.array([])
 
@@ -236,6 +236,52 @@ def create_simulated_depth_map(image_path, output_dir):
         import traceback
         traceback.print_exc()
         return None
+
+
+def visualize_3d_popup(coords_3d, title="3D Point Cloud Visualization"):
+    """
+    Create a popup window for interactive 3D visualization of point cloud.
+    
+    Args:
+        coords_3d (np.ndarray): 3D coordinates as a numpy array of shape (N, 3)
+        title (str): Title for the visualization window
+    """
+    # Create a separate figure for the popup visualization
+    popup_fig = plt.figure(figsize=(10, 8))
+    popup_ax = popup_fig.add_subplot(111, projection='3d')
+    
+    # Color the points by their depth value (Z coordinate)
+    norm = plt.Normalize(coords_3d[:, 2].min(), coords_3d[:, 2].max())
+    colors = plt.cm.plasma(norm(coords_3d[:, 2]))
+    
+    # Create the 3D scatter plot
+    popup_ax.scatter(
+        coords_3d[:, 0],
+        coords_3d[:, 1],
+        coords_3d[:, 2],
+        c=colors, 
+        s=30,  # Larger point size for better visibility
+        alpha=0.8
+    )
+    
+    # Set labels and title
+    popup_ax.set_xlabel('X')
+    popup_ax.set_ylabel('Y')
+    popup_ax.set_zlabel('Z (Depth)')
+    popup_ax.set_title(title)
+    
+    # Add a color bar to show the depth scale
+    scalar_map = plt.cm.ScalarMappable(norm=norm, cmap='plasma')
+    scalar_map.set_array([])
+    cbar = popup_fig.colorbar(scalar_map, ax=popup_ax, label='Depth')
+    
+    # Make the visualization more interactive
+    popup_ax.view_init(elev=30, azim=45)  # Set initial viewing angle
+    
+    # Show the figure in a non-blocking way
+    plt.show(block=False)
+    
+    return popup_fig
 
 
 def find_default_files(args):
@@ -408,21 +454,20 @@ def main():
     # Load the depth map
     depth_map = load_depth_map(args.depth)
     print(f"Loaded depth map of shape {depth_map.shape}")
+      # Get center points from bounding boxes
+    center_points = sample_points_from_boxes(bboxes)
+    print(f"Extracted {len(center_points)} center points from bounding boxes")
     
-    # Sample points from bounding boxes
-    sampled_points = sample_points_from_boxes(bboxes, args.sample_points)
-    print(f"Sampled {len(sampled_points)} points from bounding boxes")
-    
-    if len(sampled_points) == 0:
+    if len(center_points) == 0:
         print("No valid points to process. Exiting.")
         return
     
     # Convert to 3D coordinates
-    coords_3d = pixel_coords_to_3d(sampled_points, depth_map, z_scale=args.z_scale)
+    coords_3d = pixel_coords_to_3d(center_points, depth_map, z_scale=args.z_scale)
     print(f"Converted points to 3D coordinates")
     
     # Get normalized 3D coordinates for visualization
-    coords_3d_norm = pixel_coords_to_3d(sampled_points, depth_map, z_scale=args.z_scale, normalize=True)
+    coords_3d_norm = pixel_coords_to_3d(center_points, depth_map, z_scale=args.z_scale, normalize=True)
       # Load and prepare the image for visualization using PIL (better Unicode support)
     try:
         from PIL import Image
@@ -440,8 +485,7 @@ def main():
     
     # Create visualizations
     fig = plt.figure(figsize=(18, 6))
-    
-    # 1. Original image with bounding boxes
+      # 1. Original image with bounding boxes
     ax1 = fig.add_subplot(131)
     ax1.imshow(img)
     
@@ -450,16 +494,15 @@ def main():
         rect = plt.Rectangle((x1, y1), x2-x1, y2-y1, linewidth=2, edgecolor='r', facecolor='none')
         ax1.add_patch(rect)
     
-    ax1.scatter(sampled_points[:, 0], sampled_points[:, 1], color='yellow', s=1, alpha=0.5)
-    ax1.set_title('Image with YOLO Boxes and Sampled Points')
+    ax1.scatter(center_points[:, 0], center_points[:, 1], color='yellow', s=5, alpha=0.9)
+    ax1.set_title('Image with YOLO Boxes and Center Points')
     
-    # 2. Depth map with sampled points
+    # 2. Depth map with center points
     ax2 = fig.add_subplot(132)
     ax2.imshow(depth_map, cmap='plasma')
-    ax2.scatter(sampled_points[:, 0], sampled_points[:, 1], color='white', s=1, alpha=0.5)
-    ax2.set_title('Depth Map with Sampled Points')
-    
-    # 3. 3D visualization
+    ax2.scatter(center_points[:, 0], center_points[:, 1], color='white', s=5, alpha=0.9)
+    ax2.set_title('Depth Map with Center Points')
+      # 3. 3D visualization
     ax3 = fig.add_subplot(133, projection='3d')
     
     # Color the points by their depth value
@@ -475,16 +518,16 @@ def main():
     ax3.set_xlabel('X')
     ax3.set_ylabel('Y')
     ax3.set_zlabel('Z (Depth)')
-    ax3.set_title('3D Visualization of YOLO Boxes')
+    ax3.set_title('3D Visualization of YOLO Box Centers')
     
     # Save the visualization
-    output_path = os.path.join(args.output_dir, 'yolo_to_3d_visualization.png')
+    output_path = os.path.join(args.output_dir, 'yolo_centers_3d_visualization.png')
     plt.tight_layout()
     plt.savefig(output_path, dpi=200)
     print(f"Visualization saved to {output_path}")
     
     # Optional: Save the 3D coordinates as a numpy array
-    coords_path = os.path.join(args.output_dir, 'yolo_3d_coords.npy')
+    coords_path = os.path.join(args.output_dir, 'yolo_centers_3d_coords.npy')
     np.save(coords_path, coords_3d)
     print(f"3D coordinates saved to {coords_path}")
     
@@ -502,12 +545,17 @@ def main():
         colors[:, 2] = normalized_z      # Blue channel (higher for greater depth)
         pcd.colors = o3d.utility.Vector3dVector(colors)
         
-        ply_path = os.path.join(args.output_dir, 'yolo_3d_points.ply')
+        ply_path = os.path.join(args.output_dir, 'yolo_centers_3d_points.ply')
         o3d.io.write_point_cloud(ply_path, pcd)
         print(f"3D point cloud saved to {ply_path}")
         
     except ImportError:
         print("Open3D not available. Skipping PLY file creation.")
+      # Show popup visualization
+    popup_fig = visualize_3d_popup(coords_3d_norm, title="Interactive 3D Visualization of YOLO Box Centers")
+    
+    # Keep the figures open until closed by the user
+    plt.show()
 
 
 if __name__ == "__main__":
