@@ -1,12 +1,12 @@
 Batch Processing Summary
 ======================
 
-Date: 2025-05-11 22:43:52
+Date: 2025-05-12 14:12:22
 Input Directory: dataset/input_images
 Images Processed: 16
-Successful: 16
-Failed: 0
-Total Time: 120.5 seconds
+Successful: 0
+Failed: 16
+Total Time: 119.8 seconds
 
 Processed Images:
 1. park-trees_14_jpg.rf.144c36462351822201a9e0bfc7b0990d.jpg: Success

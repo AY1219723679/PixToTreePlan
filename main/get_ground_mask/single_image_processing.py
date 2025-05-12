@@ -27,11 +27,30 @@ def get_model():
     try:
         # First check if DeepLabV3Plus-Pytorch repository is available
         deeplab_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DeepLabV3Plus-Pytorch")
-        if not os.path.isdir(deeplab_path) or len(os.listdir(deeplab_path)) == 0:
-            raise ImportError(f"DeepLabV3Plus-Pytorch directory is empty or missing at {deeplab_path}")
+        if not os.path.isdir(deeplab_path):
+            print(f"DeepLabV3Plus-Pytorch directory is missing at {deeplab_path}")
+            print(f"Running the setup script might fix this issue.")
+            raise ImportError(f"DeepLabV3Plus-Pytorch directory is missing")
+            
+        if len(os.listdir(deeplab_path)) == 0:
+            print(f"DeepLabV3Plus-Pytorch directory is empty at {deeplab_path}")
+            print(f"Running the setup script might fix this issue.")
+            raise ImportError(f"DeepLabV3Plus-Pytorch directory is empty")
         
+        # Add the DeepLabV3Plus-Pytorch directory to sys.path to ensure imports work
+        network_path = os.path.join(deeplab_path, "network")
+        if network_path not in sys.path:
+            sys.path.insert(0, deeplab_path)  # Add to beginning of path
+            print(f"Added {deeplab_path} to Python path")
+            
         # Import the DeepLabV3+ model
-        from network.modeling import deeplabv3plus_mobilenet
+        try:
+            from network.modeling import deeplabv3plus_mobilenet
+            print("Successfully imported DeepLabV3Plus model")
+        except ImportError as e:
+            print(f"Failed to import DeepLabV3Plus model: {e}")
+            print(f"Python path: {sys.path}")
+            raise
         
         # Create the model with correct parameters for Cityscapes
         print("Creating DeepLabV3+ model with MobileNet backbone for Cityscapes (19 classes)...")
@@ -39,42 +58,66 @@ def get_model():
         
         # Check for the checkpoint at multiple possible locations
         checkpoint_paths = [
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), 
+            # First check project root
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))), 
                         "checkpoints/best_deeplabv3plus_mobilenet_cityscapes_os16.pth"),
+            # Then check core dir
             os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
+                        "checkpoints/best_deeplabv3plus_mobilenet_cityscapes_os16.pth"),
+            # Then check local directory
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 
                         "checkpoints/best_deeplabv3plus_mobilenet_cityscapes_os16.pth")
         ]
+        
+        print("Searching for checkpoint in these locations:")
+        for path in checkpoint_paths:
+            print(f" - {path} {'(exists)' if os.path.isfile(path) else '(not found)'}")
         
         checkpoint_loaded = False
         for checkpoint_path in checkpoint_paths:
             if os.path.isfile(checkpoint_path):
+                print(f"Attempting to load checkpoint from: {checkpoint_path}")
                 try:
                     # Attempt to load the checkpoint with proper error handling for PyTorch 2.6+
                     try:
                         # In PyTorch 2.6+, we need to explicitly set weights_only=False
                         checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+                        print("Loaded checkpoint with weights_only=False")
                     except TypeError:
                         # For older PyTorch versions that don't have the weights_only parameter
                         checkpoint = torch.load(checkpoint_path, map_location=device)
+                        print("Loaded checkpoint for older PyTorch version")
+                    
+                    # Check checkpoint structure and keys
+                    if isinstance(checkpoint, dict):
+                        print(f"Checkpoint keys: {list(checkpoint.keys())}")
+                    else:
+                        print(f"Checkpoint is not a dictionary, type: {type(checkpoint)}")
                     
                     # Check if the checkpoint has the expected format
-                    if "model_state" in checkpoint:
+                    if isinstance(checkpoint, dict) and "model_state" in checkpoint:
+                        print("Loading state dict from 'model_state' key...")
                         model.load_state_dict(checkpoint["model_state"])
-                        print(f"Successfully loaded model from {checkpoint_path}")
+                        print(f"✅ Successfully loaded model from {checkpoint_path}")
                         checkpoint_loaded = True
                         break
                     else:
                         # Try to load directly if "model_state" key doesn't exist
+                        print("Attempting to load state dict directly...")
                         model.load_state_dict(checkpoint)
-                        print(f"Successfully loaded model from {checkpoint_path} (direct loading)")
+                        print(f"✅ Successfully loaded model from {checkpoint_path} (direct loading)")
                         checkpoint_loaded = True
                         break
                 except Exception as e:
-                    print(f"Error loading checkpoint from {checkpoint_path}: {e}")
+                    print(f"❌ Error loading checkpoint from {checkpoint_path}: {e}")
             
         if not checkpoint_loaded:
-            print(f"No valid checkpoint found in any of the expected locations")
-            print("Using uninitialized model weights. Results will not be accurate.")
+            print(f"\n❌ WARNING: No valid checkpoint could be loaded!")
+            print("Using uninitialized model weights. Segmentation results will not be accurate.")
+            print("To fix this issue:")
+            print(" 1. Make sure the checkpoint file exists in the checkpoints directory")
+            print(" 2. Check file permissions")
+            print(" 3. Try running the setup script: python core/setup_deeplab_modified.py")
         
     except Exception as e:
         print(f"Error loading model from DeepLabV3Plus-Pytorch repository: {e}")
