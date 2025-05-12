@@ -1,0 +1,13 @@
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 1
+names: ['trunk']
+
+roboflow:
+  workspace: tree-trunk
+  project: tree-trunk-ekyci
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/tree-trunk/tree-trunk-ekyci/dataset/1
