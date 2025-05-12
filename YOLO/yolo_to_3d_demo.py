@@ -22,6 +22,12 @@ from PIL import Image
 import cv2
 from mpl_toolkits.mplot3d import Axes3D
 
+# Import side-by-side visualization function
+try:
+    from side_by_side_viz import visualize_point_clouds_side_by_side
+except ImportError:
+    print("Warning: Could not import side_by_side_viz module. Side-by-side visualization will not be available.")
+
 # Use the import helper to set up the correct paths
 try:
     from import_helpers import setup_imports
@@ -104,12 +110,18 @@ def parse_args():
         default=None,
         help="Path to the YOLO label file (.txt)"
     )
-    
-    parser.add_argument(
+      parser.add_argument(
         "--depth", 
         type=str, 
         default=None,
         help="Path to the depth map file"
+    )
+    
+    parser.add_argument(
+        "--depth_masked", 
+        type=str, 
+        default=None,
+        help="Path to the masked depth map file (ground-only)"
     )
     
     parser.add_argument(
@@ -343,14 +355,21 @@ def find_default_files(args):
                     if label_file.lower().endswith('.txt'):
                         args.label = os.path.join(labels_dir, label_file)
                         print(f"Using label file: {label_file}")
-                        break
-      # Find a default depth map if not provided but image is available
+                        break    # Find a default depth map if not provided but image is available
     if args.depth is None and args.image is not None:
         # Try to find a corresponding depth map in outputs
         img_name = os.path.basename(args.image)
         base_name = os.path.splitext(img_name)[0]
         outputs_dir = os.path.join(project_root, 'outputs')
         depth_map_found = False
+        
+    # Find a default masked depth map if not provided but image is available
+    if args.depth_masked is None and args.image is not None:
+        # Try to find a corresponding masked depth map in outputs
+        img_name = os.path.basename(args.image)
+        base_name = os.path.splitext(img_name)[0]
+        outputs_dir = os.path.join(project_root, 'outputs')
+        masked_depth_map_found = False
         
         # Only try to search if the outputs directory exists
         if os.path.exists(outputs_dir):
@@ -387,9 +406,27 @@ def find_default_files(args):
                         except Exception as e:
                             # Continue if a specific directory causes an error
                             print(f"Error checking output directory: {e}")
-                            continue
-            except Exception as e:
+                            continue            except Exception as e:
                 print(f"Error searching for depth maps: {e}")
+    
+    # Look for masked depth map in same directory as regular depth map
+    if args.depth_masked is None and args.depth is not None:
+        depth_dir = os.path.dirname(args.depth)
+        if os.path.exists(depth_dir):
+            # Try common masked depth map naming patterns
+            masked_names = ['depth_map_masked.png', 'depth_masked.png', 'ground_depth.png', 'masked_depth.png']
+            for name in masked_names:
+                potential_path = os.path.join(depth_dir, name)
+                if os.path.exists(potential_path):
+                    try:
+                        # Test if we can open it
+                        with open(potential_path, 'rb') as test_file:
+                            pass
+                        args.depth_masked = potential_path
+                        print(f"Found masked depth map: {args.depth_masked}")
+                        break
+                    except Exception:
+                        print(f"Found potential masked depth map at {potential_path} but couldn't open it")
     
     return args
 
@@ -449,10 +486,15 @@ def main():
     # Load YOLO bounding boxes
     bboxes = load_yolo_bboxes(args.label, args.image)
     print(f"Loaded {len(bboxes)} bounding boxes")
-    
-    # Load the depth map
+      # Load the depth map
     depth_map = load_depth_map(args.depth)
     print(f"Loaded depth map of shape {depth_map.shape}")
+    
+    # Load the masked depth map if provided
+    depth_map_masked = None
+    if args.depth_masked is not None:
+        depth_map_masked = load_depth_map(args.depth_masked)
+        print(f"Loaded masked depth map of shape {depth_map_masked.shape}")
       # Get center points from bounding boxes
     center_points = sample_points_from_boxes(bboxes)
     print(f"Extracted {len(center_points)} center points from bounding boxes")
@@ -460,12 +502,18 @@ def main():
     if len(center_points) == 0:
         print("No valid points to process. Exiting.")
         return
-    
-    # Convert to 3D coordinates
+      # Convert to 3D coordinates
     coords_3d = pixel_coords_to_3d(center_points, depth_map, z_scale=args.z_scale)
     print(f"Converted points to 3D coordinates")
       # Get raw pixel coordinates for 3D visualization (not normalized)
     coords_3d_raw = pixel_coords_to_3d(center_points, depth_map, z_scale=args.z_scale, normalize=False)
+    
+    # Process masked depth map if available
+    coords_3d_masked_raw = None
+    if depth_map_masked is not None:
+        coords_3d_masked = pixel_coords_to_3d(center_points, depth_map_masked, z_scale=args.z_scale)
+        coords_3d_masked_raw = pixel_coords_to_3d(center_points, depth_map_masked, z_scale=args.z_scale, normalize=False)
+        print(f"Converted points to 3D coordinates using masked depth map")
       # Load and prepare the image for visualization using PIL (better Unicode support)
     try:
         from PIL import Image
@@ -526,11 +574,11 @@ def main():
     # Optional: Save the 3D coordinates as a numpy array
     coords_path = os.path.join(args.output_dir, 'yolo_centers_3d_coords.npy')
     np.save(coords_path, coords_3d)
-    print(f"3D coordinates saved to {coords_path}")
-      # Optional: Create a simple PLY file with the 3D points
+    print(f"3D coordinates saved to {coords_path}")    # Optional: Create PLY files for the 3D point clouds
     try:
         import open3d as o3d
         
+        # Save original depth point cloud
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(coords_3d_raw)
         
@@ -541,14 +589,44 @@ def main():
         colors[:, 2] = normalized_z      # Blue channel (higher for greater depth)
         pcd.colors = o3d.utility.Vector3dVector(colors)
         
-        ply_path = os.path.join(args.output_dir, 'yolo_centers_3d_points.ply')
+        ply_path = os.path.join(args.output_dir, 'original_depth_points.ply')
         o3d.io.write_point_cloud(ply_path, pcd)
-        print(f"3D point cloud saved to {ply_path}")
+        print(f"Original depth point cloud saved to {ply_path}")
+        
+        # Save masked depth point cloud if available
+        if coords_3d_masked_raw is not None:
+            pcd_masked = o3d.geometry.PointCloud()
+            pcd_masked.points = o3d.utility.Vector3dVector(coords_3d_masked_raw)
+            
+            # Create colors based on depth for masked point cloud
+            colors_masked = np.zeros((len(coords_3d_masked_raw), 3))
+            normalized_z_masked = (coords_3d_masked_raw[:, 2] - coords_3d_masked_raw[:, 2].min()) / (coords_3d_masked_raw[:, 2].max() - coords_3d_masked_raw[:, 2].min())
+            colors_masked[:, 0] = 1 - normalized_z_masked
+            colors_masked[:, 2] = normalized_z_masked
+            pcd_masked.colors = o3d.utility.Vector3dVector(colors_masked)
+            
+            ply_path_masked = os.path.join(args.output_dir, 'ground_only_depth_points.ply')
+            o3d.io.write_point_cloud(ply_path_masked, pcd_masked)
+            print(f"Ground-only depth point cloud saved to {ply_path_masked}")
         
     except ImportError:
-        print("Open3D not available. Skipping PLY file creation.")    # Show popup visualization
-    popup_fig = visualize_3d_popup(coords_3d_raw, title="Interactive 3D Visualization of YOLO Box Centers (Raw Pixels)")
-    
+        print("Open3D not available. Skipping PLY file creation.")# Show popup visualization for single view if masked depth not available
+    if coords_3d_masked_raw is None:
+        popup_fig = visualize_3d_popup(coords_3d_raw, title="Interactive 3D Visualization of YOLO Box Centers (Raw Pixels)")
+    else:
+        # Create side-by-side visualization of both point clouds
+        comparison_fig = visualize_point_clouds_side_by_side(
+            coords_3d_raw, 
+            coords_3d_masked_raw,
+            title1="3D Points from Original Depth Map",
+            title2="3D Points from Ground-Only Depth Map"
+        )
+        
+        # Save the comparison visualization
+        comparison_path = os.path.join(args.output_dir, 'depth_comparison_3d_visualization.png')
+        comparison_fig.savefig(comparison_path, dpi=200)
+        print(f"Comparison visualization saved to {comparison_path}")
+        
     # Keep the figures open until closed by the user
     plt.show()
 
