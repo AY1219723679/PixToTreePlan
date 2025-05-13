@@ -5,7 +5,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import os
 
-def generate_depth_map(cutout_path="cutout_ground.png", output_dir="output_depth"):
+def generate_depth_map(cutout_path="dataset/input_images/park-trees_19_jpg.rf.8d6908c164aaf4b773199fbc190dc552.jpg", output_dir="output_depth"):
     """
     Generate a depth map using MiDaS
     
@@ -24,8 +24,7 @@ def generate_depth_map(cutout_path="cutout_ground.png", output_dir="output_depth
         # Load the cutout image (with alpha channel)
         cutout = Image.open(cutout_path)
         print(f"Image loaded successfully. Size: {cutout.size}, Mode: {cutout.mode}")
-        
-        # Create a black background image
+          # Create a black background image
         rgb_image = Image.new("RGB", cutout.size, (0, 0, 0))
         
         # Only paste where the alpha channel is non-zero
@@ -35,10 +34,12 @@ def generate_depth_map(cutout_path="cutout_ground.png", output_dir="output_depth
         else:
             rgb_image.paste(cutout)
             print("Image doesn't have alpha channel, using as is")
-          # Create temporary RGB image in memory
-        temp_path = os.path.join(output_dir, "temp_for_depth.jpg")
+              # Create temporary RGB image with ASCII-only filename
+        import uuid
+        temp_filename = f"temp_{uuid.uuid4().hex[:8]}.jpg"  # Use a unique name with no special characters
+        temp_path = os.path.join(output_dir, temp_filename)
         rgb_image.save(temp_path)
-        print(f"Created temporary RGB image for processing")
+        print(f"Created temporary RGB image for processing: {temp_filename}")
         
         # Load MiDaS model
         print("Loading MiDaS model...")
@@ -55,10 +56,13 @@ def generate_depth_map(cutout_path="cutout_ground.png", output_dir="output_depth
             # Load transforms
             midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
             transform = midas_transforms.small_transform
-            
-            # Load image
-            img = cv2.imread(temp_path)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+              # Load image using PIL and convert to OpenCV format to handle Unicode paths
+            pil_img = Image.open(temp_path)
+            img = np.array(pil_img)
+            # Convert from RGB (PIL) to BGR (OpenCV default), then back to RGB
+            if img.shape[2] >= 3:  # Check if image has at least 3 channels
+                img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)  # PIL already gives us RGB
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)  # Convert back to RGB for MiDaS
             
             # Apply input transforms
             input_batch = transform(img).to(device)
@@ -120,13 +124,14 @@ def generate_depth_map(cutout_path="cutout_ground.png", output_dir="output_depth
                 plt.tight_layout()
                 vis_path = os.path.join(output_dir, "depth_visualization.png")
                 plt.savefig(vis_path)
-                plt.close()  # Close figure to free memory
-                print(f"Saved visualization to {vis_path}")            # Clean up temp file
+                plt.close()  # Close figure to free memory                print(f"Saved visualization to {vis_path}")            
+                
+            print("Depth map generation complete!")
+            
+            # Clean up temp file
             if os.path.exists(temp_path):
                 os.remove(temp_path)
                 print(f"Removed temporary file")
-                
-            print("Depth map generation complete!")
             
         except Exception as e:
             print(f"Error in MiDaS processing: {e}")

@@ -45,7 +45,10 @@ except ImportError as e:
 POINT_CLOUD_AVAILABLE = False
 try:
     import open3d as o3d
-    from main.img_to_pointcloud.image_to_pointcloud import image_to_pointcloud, visualize_pointcloud, save_pointcloud
+    from main.img_to_pointcloud.image_to_pointcloud import (
+        image_to_pointcloud, visualize_pointcloud, save_pointcloud, 
+        visualize_mesh_matplotlib, visualize_pointcloud_matplotlib
+    )
     POINT_CLOUD_AVAILABLE = True
     print("Successfully imported point cloud modules")
 except ImportError as e:
@@ -195,19 +198,22 @@ def step4_create_pointcloud(cutout_path, image_basename, image_output_dir, args)
     print("\nSTEP 4: Generating point cloud...")
     
     # Import Open3D here to ensure it's available
-    import open3d as o3d
-      # Define output paths in the image's output directory
+    import open3d as o3d    # Define output paths in the image's output directory
     output_pointcloud = os.path.join(image_output_dir, "point_cloud.ply")
     output_visualization = os.path.join(image_output_dir, "point_cloud_visualization.png")
-    
-    # Generate point cloud
-    pcd = image_to_pointcloud(
+    output_matplotlib_vis = os.path.join(image_output_dir, "point_cloud_matplotlib.png")
+      # Generate point cloud
+    # The image_to_pointcloud function returns a tuple (pcd, raw_points, colors)
+    pcd_tuple = image_to_pointcloud(
         cutout_path, 
         use_alpha=True, 
         z_scale=args.z_scale, 
         sample_rate=args.sample_rate, 
         save_depth_map=False  # Don't save depth map separately
     )
+    
+    # Extract just the point cloud object (first element of the tuple)
+    pcd = pcd_tuple[0]
     
     # Optional: Apply statistical outlier removal
     pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
@@ -217,14 +223,22 @@ def step4_create_pointcloud(cutout_path, image_basename, image_output_dir, args)
     pcd.orient_normals_towards_camera_location()
     
     # Save the point cloud
-    save_pointcloud(pcd, output_pointcloud)
-      # Visualize the point cloud if requested
+    save_pointcloud(pcd, output_pointcloud)    # Visualize the point cloud if requested
     if args.visualize:
+        # Open3D visualization
         visualize_pointcloud(pcd, output_visualization)
+        
+        # Extract raw points and colors from the tuple for matplotlib visualization
+        raw_points = pcd_tuple[1]
+        colors = pcd_tuple[2]
+        
+        # Matplotlib visualization
+        visualize_pointcloud_matplotlib(raw_points, colors, output_matplotlib_vis)
     
     print(f"  Point cloud saved to {output_pointcloud}")
     if args.visualize:
-        print(f"  Visualization saved to {output_visualization}")
+        print(f"  Open3D visualization saved to {output_visualization}")
+        print(f"  Matplotlib visualization saved to {output_matplotlib_vis}")
     
     return output_pointcloud
 

@@ -1,0 +1,5 @@
+# Requirements for combined visualization
+plotly>=5.0.0
+open3d>=0.15.0
+numpy>=1.20.0
+pillow>=8.0.0

@@ -14,7 +14,7 @@ deeplab_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "DeepLab
 sys.path.insert(0, deeplab_path)  # Insert at beginning to ensure our module takes precedence
 
 # Specify the path to your image
-IMAGE_PATH = "dataset/input_images/urban_tree_1_jpg.rf.3b0d0591cbe20a93bf8d9fb59761f634.jpg"  # Replace with your image path
+IMAGE_PATH = "dataset/input_images/park-trees_19_jpg.rf.8d6908c164aaf4b773199fbc190dc552.jpg"  # Replace with your image path
 
 # Set up device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
